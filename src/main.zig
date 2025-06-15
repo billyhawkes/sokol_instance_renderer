@@ -3,6 +3,7 @@ const sapp = @import("sokol").app;
 const sglue = @import("sokol").glue;
 const sg = @import("sokol").gfx;
 const slog = @import("sokol").log;
+const simgui = @import("sokol").imgui;
 const shaders = @import("shaders/shaders.glsl.zig");
 const math = @import("math.zig");
 
@@ -18,7 +19,8 @@ const math = @import("math.zig");
 const VERTEX_SIZE = 7;
 const MAX_VERTEX_SIZE = VERTEX_SIZE * 1000;
 const MAX_INDEX_SIZE = 1000;
-const MAX_INSTANCE_SIZE = 1000;
+const INSTANCE_VERTEX_SIZE = 64;
+const MAX_INSTANCE_SIZE = 64 * 15625;
 
 const Vertex = struct {
     position: [3]f32,
@@ -106,25 +108,18 @@ const Renderer = struct {
             .passAction = .{},
             .pip = .{},
             .bind = .{},
-            .view = math.Mat4.lookat(.{ .x = 0.0, .y = 1.5, .z = 6.0 }, math.Vec3.zero(), math.Vec3.up()),
+            .view = math.Mat4.lookat(.{ .x = 0.0, .y = 70.0, .z = 100.0 }, math.Vec3.zero(), math.Vec3.up()),
             .indexLength = 0,
             .instanceLength = 0,
         };
     }
 
-    fn addMesh(self: *Renderer, mesh: Mesh) void {
+    fn addMesh(self: *Renderer, mesh: Mesh, instances: []math.Mat4) void {
         self.indexLength = @intCast(mesh.indices.len);
+        self.instanceLength = @intCast(instances.len);
         sg.updateBuffer(self.vertexBuffer, sg.asRange(mesh.vertices));
         sg.updateBuffer(self.indexBuffer, sg.asRange(mesh.indices));
-    }
-
-    fn addInstance(self: *Renderer, position: [3]f32) void {
-        _ = sg.appendBuffer(self.instanceBuffer, sg.asRange(&math.Mat4.identity().mul(math.Mat4.translate(.{
-            .x = position[0],
-            .y = position[1],
-            .z = position[2],
-        }))));
-        self.instanceLength += 1;
+        sg.updateBuffer(self.instanceBuffer, sg.asRange(instances));
     }
 
     fn submit(self: *Renderer) void {
@@ -166,7 +161,7 @@ const Renderer = struct {
     }
 
     fn draw(self: *Renderer) void {
-        const proj = math.Mat4.persp(60.0, sapp.widthf() / sapp.heightf(), 0.01, 15.0);
+        const proj = math.Mat4.persp(60.0, sapp.widthf() / sapp.heightf(), 0.01, 1000.0);
         const vs_params: shaders.VsParams = .{ .vp = math.Mat4.mul(proj, self.view) };
         sg.beginPass(.{ .action = self.passAction, .swapchain = sglue.swapchain() });
         sg.applyPipeline(self.pip);
@@ -185,27 +180,49 @@ const Renderer = struct {
 
 const state = struct {
     var rx: f32 = 0.0;
-    var ry: f32 = 0.0;
     var renderer: Renderer = undefined;
 };
 
 export fn init() void {
     state.renderer = Renderer.init();
 
-    // state.renderer.add(Shapes.Cube);
-
     state.renderer.submit();
 }
 
 export fn frame() void {
     const dt: f32 = @floatCast(sapp.frameDuration() * 60);
-    _ = dt;
-
-    state.renderer.addMesh(Shapes.Cube());
-    state.renderer.addInstance(.{ 1.5, 0.0, 0.0 });
-    state.renderer.addInstance(.{ -1.5, 0.0, 0.0 });
 
     state.renderer.clear(.{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 0.0 });
+
+    const fps = 1.0 / (dt / 60);
+    std.debug.print("FPS: {d:.2}\n", .{fps});
+
+    var instances: [25 * 25 * 25]math.Mat4 = undefined;
+    for (0..25) |xIndex| {
+        for (0..25) |yIndex| {
+            for (0..25) |zIndex| {
+                const x: i32 = @intCast(xIndex);
+                const y: i32 = @intCast(yIndex);
+                const z: i32 = @intCast(zIndex);
+                const index = xIndex * 25 * 25 + yIndex * 25 + zIndex;
+                instances[index] = math.Mat4.mul(
+                    math.Mat4.mul(
+                        math.Mat4.identity(),
+                        math.Mat4.translate(
+                            .{ .x = (@as(f32, @floatFromInt(x)) - 12) * 3, .y = (@as(f32, @floatFromInt(y)) - 12) * 3, .z = (@as(f32, @floatFromInt(z)) - 12) * 3 },
+                        ),
+                    ),
+                    math.Mat4.rotate(state.rx, .{ .x = 0.0, .y = 1.0, .z = 0.0 }),
+                );
+            }
+        }
+    }
+    state.rx += dt * 1.0;
+    state.renderer.addMesh(
+        Shapes.Cube(),
+        &instances,
+    );
+
     state.renderer.draw();
 }
 
@@ -218,7 +235,7 @@ pub fn main() void {
         .init_cb = init,
         .frame_cb = frame,
         .cleanup_cb = cleanup,
-        .window_title = "Sokol 4",
+        .window_title = "Sokol Instance Renderer",
         .width = 1280,
         .height = 720,
         .logger = .{ .func = slog.func },
